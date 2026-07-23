@@ -1,0 +1,427 @@
+# sendgo/symfony
+
+> **Symfony에서 카카오 알림톡, 친구톡, SMS를 가장 쉽게 발송하는 공식 Symfony 번들**
+
+[![Packagist](https://img.shields.io/packagist/v/sendgo/symfony)](https://packagist.org/packages/sendgo/symfony)
+[![Symfony](https://img.shields.io/badge/Symfony-6.4%20%7C%207-000000?logo=symfony)](https://symfony.com)
+[![PHP](https://img.shields.io/badge/PHP-8.2%2B-777BB4?logo=php)](https://php.net)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+`sendgo/symfony`는 [`sendgo/php`](https://github.com/send-go/php) 코어를 확장한 **Symfony 전용 번들**입니다.
+DI 컨테이너 서비스 자동 등록, 설정(config) 통합, 오토와이어링을 완벽하게 제공합니다.
+
+---
+
+## 목차
+
+- [설치](#설치)
+- [빠른 시작](#빠른-시작)
+- [오토와이어링 사용법](#오토와이어링-사용법)
+- [상세 사용법](#상세-사용법)
+  - [알림톡](#알림톡)
+  - [친구톡](#친구톡)
+  - [SMS / LMS / MMS](#sms--lms--mms)
+- [서비스 클래스 패턴](#서비스-클래스-패턴)
+- [Messenger 비동기 발송](#messenger-비동기-발송)
+- [예외 처리](#예외-처리)
+- [설정 옵션](#설정-옵션)
+- [자주 묻는 질문](#자주-묻는-질문-faq)
+
+---
+
+## 설치
+
+```bash
+composer require sendgo/symfony
+```
+
+### 번들 등록
+
+[Symfony Flex](https://symfony.com/doc/current/setup/flex.html)를 사용하는 경우 번들이 자동으로 등록됩니다.
+Flex를 사용하지 않는다면 `config/bundles.php`에 직접 추가하세요.
+
+```php
+<?php
+// config/bundles.php
+
+return [
+    // ...
+    Sendgo\Symfony\SendgoBundle::class => ['all' => true],
+];
+```
+
+---
+
+## 빠른 시작
+
+### 1단계 — 환경변수 설정 (`.env`)
+
+```env
+SENDGO_ACCESS_KEY=your_access_key
+SENDGO_SECRET_KEY=your_secret_key
+SENDGO_KAKAO_SENDER_KEY=your_kakao_key
+SENDGO_SMS_SENDER_KEY=your_sms_key
+SENDGO_API_VERSION=v2
+```
+
+### 2단계 — 번들 설정 파일 (`config/packages/sendgo.yaml`)
+
+```yaml
+# config/packages/sendgo.yaml
+sendgo:
+    access_key:       '%env(SENDGO_ACCESS_KEY)%'
+    secret_key:       '%env(SENDGO_SECRET_KEY)%'
+    kakao_sender_key: '%env(SENDGO_KAKAO_SENDER_KEY)%'
+    sms_sender_key:   '%env(SENDGO_SMS_SENDER_KEY)%'
+    api_version:      '%env(SENDGO_API_VERSION)%'
+    url:              'https://sendgo.io'
+```
+
+### 3단계 — 알림톡 전송
+
+```php
+<?php
+// src/Controller/OrderController.php
+
+namespace App\Controller;
+
+use App\Entity\Order;
+use Sendgo\Php\Sendgo;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\Routing\Attribute\Route;
+
+class OrderController extends AbstractController
+{
+    public function __construct(private Sendgo $sendgo) {}
+
+    #[Route('/orders/{id}/confirm', methods: ['POST'])]
+    public function confirm(Order $order): JsonResponse
+    {
+        $this->sendgo->alimtalk->send([
+            'templateCode' => 'ORDER_CONFIRM_001',
+            'contacts'     => [
+                [
+                    'contact' => $order->getUser()->getPhone(),
+                    'name'    => $order->getUser()->getName(),
+                    'var1'    => $order->getNumber(),
+                    'var2'    => number_format($order->getTotal()) . '원',
+                ],
+            ],
+        ]);
+
+        return $this->json(['success' => true]);
+    }
+}
+```
+
+---
+
+## 오토와이어링 사용법
+
+번들이 `Sendgo\Php\Sendgo` 서비스를 컨테이너에 등록하므로, 생성자에 타입힌트만 하면
+자동으로 주입됩니다. 별도의 서비스 정의는 필요하지 않습니다.
+
+```php
+<?php
+
+use Sendgo\Php\Sendgo;
+
+class MyService
+{
+    // 생성자 오토와이어링으로 자동 주입
+    public function __construct(private Sendgo $sendgo) {}
+}
+```
+
+`sendgo` 서비스 ID로 직접 컨테이너에서 가져올 수도 있습니다.
+
+```php
+$sendgo = $container->get('sendgo'); // Sendgo\Php\Sendgo 인스턴스
+```
+
+---
+
+## 상세 사용법
+
+### 알림톡
+
+```php
+<?php
+
+use Sendgo\Php\Sendgo;
+
+// 다건 발송
+$sendgo->alimtalk->send([
+    'templateCode' => 'ORDER_CONFIRM_001',
+    'contacts'     => [
+        ['contact' => '01011111111', 'name' => '홍길동', 'var1' => 'ORD-001', 'var2' => '29,000원'],
+        ['contact' => '01022222222', 'name' => '김철수', 'var1' => 'ORD-002', 'var2' => '15,000원'],
+        ['contact' => '01033333333', 'name' => '이영희', 'var1' => 'ORD-003', 'var2' => '52,000원'],
+    ],
+]);
+
+// 예약 발송
+$sendgo->alimtalk->send([
+    'templateCode' => 'PROMO_SUMMER_2026',
+    'scheduleType' => 'SCHEDULED',
+    'at'           => '2026-07-28 09:00:00',
+    'contacts'     => [['contact' => '01012345678', 'var1' => '여름 한정 50% 할인']],
+]);
+
+// SMS 자동 대체 발송
+$sendgo->alimtalk->send([
+    'templateCode' => 'DELIVERY_START_001',
+    'replaceSms'   => 'Y',
+    'smsSubject'   => '[배송 시작 안내]',
+    'smsContent'   => "주문하신 상품이 출고되었습니다.\n송장번호: #{var2}",
+    'contacts'     => [['contact' => '01012345678', 'var1' => 'ORD-001', 'var2' => '1234567890']],
+]);
+```
+
+### 친구톡
+
+```php
+<?php
+
+// 텍스트형
+$sendgo->friendtalk->send([
+    'content'  => '안녕하세요! 7월 한정 특가 이벤트를 확인해보세요.',
+    'contacts' => [['contact' => '01012345678']],
+]);
+
+// 이미지형
+$sendgo->friendtalk->send([
+    'messageType' => 'FI',
+    'content'     => '이번 주 특가 상품을 확인하세요!',
+    'imageUrl'    => 'https://cdn.example.com/banner.jpg',
+    'imageLink'   => 'https://example.com/event',
+    'contacts'    => [['contact' => '01012345678']],
+]);
+
+// 버튼 포함
+$sendgo->friendtalk->send([
+    'content'  => '7월 쿠폰이 도착했습니다! 지금 바로 사용하세요.',
+    'buttons'  => [
+        ['name' => '쿠폰 받기', 'type' => 'WL', 'linkMo' => 'https://example.com/coupon'],
+        ['name' => '고객센터', 'type' => 'WL', 'linkMo' => 'https://example.com/cs'],
+    ],
+    'contacts' => [['contact' => '01012345678']],
+]);
+```
+
+### SMS / LMS / MMS
+
+```php
+<?php
+
+// SMS (90자 이하)
+$sendgo->sms->sendSms([
+    'content'  => '[Sendgo] 인증번호: 123456 (5분 이내 입력)',
+    'contacts' => [['contact' => '01012345678']],
+]);
+
+// LMS (장문, 2,000자 이하)
+$sendgo->sms->sendLms([
+    'subject'  => '[중요] 서비스 점검 안내',
+    'content'  => "안녕하세요. 서비스 점검이 예정되어 있습니다.\n\n■ 일시: 2026-07-25 02:00 ~ 06:00\n■ 영향: 전체 서비스",
+    'contacts' => [['contact' => '01012345678']],
+]);
+
+// MMS (이미지 포함)
+$sendgo->sms->sendMms([
+    'subject'  => '[이벤트] 7월 특가',
+    'content'  => '이번 달 특가 상품을 확인하세요!',
+    'contacts' => [['contact' => '01011111111'], ['contact' => '01022222222']],
+]);
+```
+
+---
+
+## 서비스 클래스 패턴
+
+```php
+<?php
+// src/Service/NotificationService.php
+
+namespace App\Service;
+
+use Psr\Log\LoggerInterface;
+use Sendgo\Php\Sendgo;
+use Sendgo\Php\Exception\SendgoException;
+
+class NotificationService
+{
+    public function __construct(
+        private Sendgo $sendgo,
+        private LoggerInterface $logger,
+    ) {}
+
+    public function sendOrderConfirm(string $phone, string $orderNo, int $amount): void
+    {
+        $this->sendgo->alimtalk->send([
+            'templateCode' => 'ORDER_CONFIRM_001',
+            'contacts'     => [
+                ['contact' => $phone, 'var1' => $orderNo, 'var2' => number_format($amount) . '원'],
+            ],
+        ]);
+    }
+
+    public function sendVerificationCode(string $phone, string $code): void
+    {
+        try {
+            // 알림톡 우선, 실패 시 SMS 대체
+            $this->sendgo->alimtalk->send([
+                'templateCode' => 'VERIFY_CODE_001',
+                'replaceSms'   => 'Y',
+                'smsContent'   => "[인증] 인증번호: {$code} (5분 이내 입력)",
+                'contacts'     => [['contact' => $phone, 'var1' => $code]],
+            ]);
+        } catch (SendgoException $e) {
+            $this->logger->error('Sendgo 인증번호 발송 실패', [
+                'phone'      => $phone,
+                'error_code' => $e->getErrorCode(),
+                'status'     => $e->getStatusCode(),
+            ]);
+            throw $e;
+        }
+    }
+}
+```
+
+`services.yaml`에서 `autowire: true`가 설정되어 있으면 `Sendgo\Php\Sendgo`가 자동 주입됩니다.
+
+---
+
+## Messenger 비동기 발송
+
+[Symfony Messenger](https://symfony.com/doc/current/messenger.html)로 발송을 비동기 처리할 수 있습니다.
+
+```php
+<?php
+// src/Message/SendAlimtalkMessage.php
+
+namespace App\Message;
+
+class SendAlimtalkMessage
+{
+    public function __construct(
+        public readonly string $templateCode,
+        public readonly array $contacts,
+    ) {}
+}
+```
+
+```php
+<?php
+// src/MessageHandler/SendAlimtalkHandler.php
+
+namespace App\MessageHandler;
+
+use App\Message\SendAlimtalkMessage;
+use Sendgo\Php\Sendgo;
+use Symfony\Component\Messenger\Attribute\AsMessageHandler;
+
+#[AsMessageHandler]
+class SendAlimtalkHandler
+{
+    public function __construct(private Sendgo $sendgo) {}
+
+    public function __invoke(SendAlimtalkMessage $message): void
+    {
+        $this->sendgo->alimtalk->send([
+            'templateCode' => $message->templateCode,
+            'contacts'     => $message->contacts,
+        ]);
+    }
+}
+```
+
+```php
+// 디스패치 예시
+$bus->dispatch(new SendAlimtalkMessage('ORDER_CONFIRM_001', [
+    ['contact' => '01012345678', 'var1' => 'ORD-001'],
+]));
+```
+
+---
+
+## 예외 처리
+
+```php
+<?php
+
+use Sendgo\Php\Exception\SendgoException;
+
+try {
+    $sendgo->alimtalk->send([...]);
+} catch (SendgoException $e) {
+    $logger->error('Sendgo 발송 실패', [
+        'status'     => $e->getStatusCode(),
+        'error_code' => $e->getErrorCode(),
+        'endpoint'   => $e->getEndpoint(),
+    ]);
+
+    match ($e->getErrorCode()) {
+        'INVALID_ACCESS_KEY',
+        'INVALID_SECRET_KEY'    => $this->alertOps('Sendgo 인증키 오류'),
+        'INVALID_TEMPLATE_CODE' => $logger->warning('존재하지 않는 템플릿'),
+        'PAYMENT_REQUIRED'      => $this->alertOps('Sendgo 크레딧 부족'),
+        'IP_NOT_ALLOWED'        => $this->alertOps('허용되지 않은 IP'),
+        default                 => null,
+    };
+}
+```
+
+---
+
+## 설정 옵션
+
+`config/packages/sendgo.yaml` 에서 설정합니다:
+
+| 키 | 환경변수 | 기본값 | 설명 |
+|----|---------|--------|------|
+| `access_key` | `SENDGO_ACCESS_KEY` | — (필수) | Sendgo 액세스 키 |
+| `secret_key` | `SENDGO_SECRET_KEY` | — (필수) | Sendgo 시크릿 키 |
+| `kakao_sender_key` | `SENDGO_KAKAO_SENDER_KEY` | `null` | 카카오 발신프로필 키 |
+| `sms_sender_key` | `SENDGO_SMS_SENDER_KEY` | `null` | SMS 발신자 키 |
+| `api_version` | `SENDGO_API_VERSION` | `'v2'` | API 버전 |
+| `url` | `SENDGO_URL` | `'https://sendgo.io'` | API 기본 URL |
+
+---
+
+## 자주 묻는 질문 (FAQ)
+
+**Q. `sendgo/php`와의 차이는 무엇인가요?**
+A. `sendgo/php`는 프레임워크 독립적인 순수 PHP 코어 패키지입니다. `sendgo/symfony`는 이를 확장해 번들 자동 등록, DI 컨테이너 서비스 등록, config 바인딩, 오토와이어링 등 Symfony 통합을 추가합니다.
+
+**Q. Symfony 6.4, 7 모두 지원하나요?**
+A. 네, `symfony/config`, `symfony/dependency-injection`, `symfony/http-kernel` 모두 `^6.4|^7.0`을 지원합니다.
+
+**Q. 오토와이어링 없이 서비스 ID로 접근할 수 있나요?**
+A. 네, `sendgo` 별칭이 등록되어 있어 `$container->get('sendgo')`로 접근할 수 있습니다.
+
+**Q. 테스트 시 Sendgo를 Mock 처리하려면?**
+A. 테스트 컨테이너에서 `Sendgo\Php\Sendgo` 서비스를 PHPUnit Mock으로 교체하면 됩니다.
+
+---
+
+## 관련 패키지
+
+| 언어/프레임워크 | 패키지 | GitHub |
+|----------------|--------|--------|
+| PHP (순수) | `sendgo/php` | [php](https://github.com/send-go/php) |
+| Laravel | `sendgo/laravel` | [laravel](https://github.com/send-go/laravel) |
+| Spring Boot | `io.sendgo:sendgo-spring` | [spring](https://github.com/send-go/spring) |
+| Node.js | `@sendgo/node` | [node](https://github.com/send-go/node) |
+| 전체 목록 | — | [send-go GitHub 조직](https://github.com/send-go) |
+
+---
+
+## 라이선스
+
+MIT License © 2026 [Sendgo](https://sendgo.io)
+
+---
+
+*키워드: 카카오 알림톡 Symfony, 카카오 친구톡 Symfony, SMS 발송 Symfony, 알림톡 Symfony 번들, Symfony 카카오 API 연동, Symfony Messenger 알림톡, Sendgo Symfony SDK*
