@@ -450,7 +450,80 @@ A. 테스트 컨테이너에서 `Sendgo\Php\Sendgo` 서비스를 PHPUnit Mock으
 사용 예시와 파라미터는 [코어 README](https://github.com/send-go) 와
 [SDK 가이드](https://sendgo.io/ko/sdk) 를 참고하세요.
 
+## 관리 API — 채널·템플릿·발신번호 등록 (v2 전용)
+
+콘솔에서만 되던 등록·심사를 코드로 처리합니다. 이 번들은 코어(`sendgo/php`)의
+클라이언트를 그대로 노출하므로, 주입받은 `Sendgo` 서비스에서 바로 쓸 수 있습니다.
+
+| 서비스 | 하는 일 | 계정 |
+| --- | --- | --- |
+| `$sendgo->kakaoSenders` | 카카오 채널 인증·등록·동기화, 브랜드메시지 M/N 신청 | 기업 |
+| `$sendgo->noticeTemplates` | 알림톡 템플릿 CRUD, 검수 요청·취소, 승인 취소, 휴면 해제 | 기업 |
+| `$sendgo->brandTemplates` | 브랜드메시지 템플릿 CRUD, 동기화, 가져오기 | 기업 |
+| `$sendgo->senderRegistration` | 발신번호 등록 신청, 중복 확인, 유형 안내 | 개인·기업 |
+| `$sendgo->messageTemplates` | 문자 상용구 템플릿 CRUD | 개인·기업 |
+| `$sendgo->kakaoImages` | 카카오 이미지 업로드 — 템플릿용 URL 발급 | 기업 |
+| `$sendgo->rejectedNumbers` | 수신거부(080) 번호 조회 | 개인·기업 |
+| `$sendgo->webhook` | 이벤트 웹훅 구독 — 심사 결과 수신 | 개인·기업 |
+
+> **sendgo.io 콘솔에 들어올 일이 없습니다.** 휴대폰 발신번호는 PASS 대신
+> 신분증 사본을 받아 sendgo 운영자가 대신 심사합니다. 사람이 개입하는 지점은
+> 카카오 채널 인증번호 하나뿐이고, 그것도 여러분 화면에서 입력받으면 됩니다.
+> 심사가 붙는 것들은 비동기라 웹훅으로 결과를 받으세요.
+
+```php
+<?php
+
+namespace App\Controller;
+
+use Sendgo\Php\Sendgo;
+use Symfony\Component\HttpFoundation\JsonResponse;
+
+class OnboardingController
+{
+    public function __construct(private Sendgo $sendgo) {}
+
+    public function registerChannel(string $yellowId, string $phone): JsonResponse
+    {
+        // 1단계 — 카카오가 관리자 휴대폰으로 인증번호를 SMS 발송한다
+        $this->sendgo->kakaoSenders->requestToken($yellowId, $phone);
+
+        return new JsonResponse(['message' => '인증번호를 발송했습니다.']);
+    }
+
+    public function completeChannel(string $yellowId, string $phone, string $code): JsonResponse
+    {
+        $created = $this->sendgo->kakaoSenders->create([
+            'token'        => $code,
+            'yellowId'     => $yellowId,
+            'phoneNumber'  => $phone,
+            'categoryCode' => '001001',
+        ]);
+
+        return new JsonResponse($created['data']['sender']);
+    }
+}
+```
+
+전체 파라미터는 [코어 README](https://github.com/send-go/php) 와
+[API 문서](https://sendgo.io/ko/applications/guide/v2) 를 참고하세요.
+
+---
+
 ## 변경 사항
+
+### 1.3.0 (2026-09-11)
+
+- **관리 API 노출** — 코어 1.3.0 의 `kakaoSenders` · `noticeTemplates` ·
+  `brandTemplates` · `senderRegistration` · `messageTemplates` 를 주입받은
+  `Sendgo` 서비스에서 그대로 쓸 수 있습니다. 콘솔에서만 되던 채널 등록,
+  알림톡 템플릿 검수 요청, 발신번호 심사 접수를 코드로 처리합니다.
+- **이벤트 웹훅** 추가 — 발신번호 승인, 알림톡 검수 결과, 채널 차단,
+  브랜드메시지 타겟팅 결과를 구독해 받습니다. 서명은 받은 원본 바이트로
+  검증합니다(SDK 에 검증 헬퍼 포함).
+- **카카오 이미지 업로드** 추가 — 브랜드메시지 템플릿의 `imageUrl` 은 카카오가
+  호스팅하는 URL 이어야 하는데, 그 URL 을 얻는 길이 콘솔에만 있었습니다.
+- **수신거부(080) 조회** 추가 — 자기 DB 의 수신 상태를 맞출 수 있습니다.
 
 ### 1.2.1 (2026-08-14)
 
