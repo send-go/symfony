@@ -3,6 +3,7 @@
 namespace Sendgo\Symfony\DependencyInjection;
 
 use Sendgo\Php\Sendgo;
+use Sendgo\Php\AccountClient;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\HttpKernel\DependencyInjection\Extension;
@@ -19,6 +20,18 @@ class SendgoExtension extends Extension
     {
         $configuration = new Configuration();
         $config = $this->processConfiguration($configuration, $configs);
+
+        if ($config['agent_token'] !== null) {
+            $account = new Definition(AccountClient::class, [$config['agent_token'], $config['url']]);
+            $account->setPublic(true);
+            $container->setDefinition(AccountClient::class, $account);
+        }
+        if (empty($config['access_key']) || empty($config['secret_key'])) {
+            if (empty($config['agent_token']) || !empty($config['access_key']) || !empty($config['secret_key'])) {
+                throw new \InvalidArgumentException('access_key와 secret_key를 함께 지정하거나 agent_token을 지정하세요.');
+            }
+            return;
+        }
 
         // 설정 배열을 코어 SDK 생성자 인자로 매핑 (snake_case 키 유지)
         $definition = new Definition(Sendgo::class, [
